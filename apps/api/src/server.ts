@@ -280,7 +280,28 @@ app.get('/scans/:id/report.json', async (req, reply) => {
 })
 
 app.get('/scans/:id/report.pdf', async (req, reply) => {
-  return reply.code(501).send({ code: 'NOT_IMPLEMENTED', message: 'PDF generation will be added with Playwright/Puppeteer.' })
+  const id = (req.params as any).id
+  const scan = store.scans.find(s => s.id === id)
+  if (!scan) return reply.code(404).send({ code: 'NOT_FOUND', message: 'scan not found' })
+  // Build absolute URL to the HTML report
+  const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`
+  const proto = (req.headers['x-forwarded-proto'] as string) || 'http'
+  const reportUrl = `${proto}://${host}/scans/${id}/report.html`
+  try {
+    const { chromium } = await import('playwright')
+    const browser = await chromium.launch({ args: ['--no-sandbox'] })
+    const page = await browser.newPage()
+    await page.goto(reportUrl, { waitUntil: 'networkidle' })
+    const pdf = await page.pdf({ printBackground: true, format: 'A4' })
+    await browser.close()
+    reply
+      .type('application/pdf')
+      .header('Content-Disposition', `inline; filename="scan-${id}.pdf"`)
+      .send(pdf)
+  } catch (err: any) {
+    app.log.error({ err }, 'Failed to generate PDF. Ensure Playwright and Chromium are installed.')
+    return reply.code(501).send({ code: 'PDF_UNAVAILABLE', message: 'Install Playwright browsers: pnpm exec playwright install chromium' })
+  }
 })
 
 app.get('/scans/:id/report.html', async (req, reply) => {

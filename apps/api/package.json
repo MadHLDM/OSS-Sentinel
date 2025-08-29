@@ -9,12 +9,13 @@
     "dev": "node --enable-source-maps dist/server.js || echo 'Build first: pnpm build'",
     "demo": "cross-env DEMO=1 node --enable-source-maps dist/server.js || echo 'Build first: pnpm build'",
     "demo:prisma": "cross-env DEMO=1 PRISMA=1 node --enable-source-maps dist/server.js || echo 'Build first: pnpm build'",
-    "test": "echo 'No tests yet'"
+    "test": "vitest run"
   },
   "dependencies": {
     "@oss-sentinel/core": "workspace:*",
     "@prisma/client": "^6.15.0",
     "fastify": "^4.28.1",
+    "playwright": "^1.55.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

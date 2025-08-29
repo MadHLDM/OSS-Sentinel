@@ -1,0 +1,5 @@
+[
+  { "name": "express", "version": "4.18.2", "ecosystem": "npm" },
+  { "name": "lodash",  "version": "4.17.20", "ecosystem": "npm" }
+]
+

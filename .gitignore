@@ -12,6 +12,8 @@ build/
 .nuxt/
 .vite/
 coverage/
+playwright-report/
+test-results/
 
 # Environment and config files
 .env
@@ -47,8 +49,7 @@ logs/
 ehthumbs.db
 Thumbs.db
 
-# Markdown documentation files
-*.md
+
 
 # Temporary files
 .tmp/

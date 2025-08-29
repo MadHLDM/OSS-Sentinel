@@ -9,15 +9,23 @@
     "build": "pnpm -r --workspace-concurrency=1 build",
     "dev": "node ./scripts/dev-info.cjs",
     "test": "pnpm -r test",
+    "test:unit": "vitest run",
+    "test:watch": "vitest",
+    "test:ci": "vitest run --coverage",
+    "test:e2e": "playwright test",
     "demo": "cross-env DEMO=1 pnpm --filter @oss-sentinel/api demo",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push"
   },
   "devDependencies": {
+    "@playwright/test": "^1.47.2",
     "@prisma/client": "6.15.0",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "prisma": "^6.15.0",
-    "typescript": "^5.5.4"
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5",
+    "@vitest/coverage-v8": "^2.0.5"
   }
 }

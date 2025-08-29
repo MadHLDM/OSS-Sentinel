@@ -1,0 +1,6 @@
+[
+  { "name": "leftpad", "version": "1.3.0", "ecosystem": "npm" },
+  { "name": "sublib",  "version": "0.1.0", "ecosystem": "npm" },
+  { "name": "uuid",    "version": "9.0.0", "ecosystem": "npm" }
+]
+
