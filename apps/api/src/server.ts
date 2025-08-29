@@ -36,6 +36,9 @@ async function tryInitPrisma() {
 }
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoSeedDir = path.resolve(__dirname, '../../../demo/seeds')
+// Optional local fonts directory for HTML report
+const repoRoot = path.resolve(__dirname, '../../..')
+const localFontsDir = path.join(repoRoot, 'apps/api/assets/fonts')
 
 // load demo seeds (only when store is empty)
 async function loadSeedsIfNeeded() {
@@ -276,6 +279,107 @@ app.get('/scans/:id/report.json', async (req, reply) => {
     status: lf.status
   }))
   const score = await app.inject({ method: 'GET', url: `/scans/${id}/score` }).then(r => JSON.parse(r.payload))
+  // Build a print‑optimized HTML (CSS‑only) and embed local fonts when available
+  const readFontAsDataUrl = (filename: string) => {
+    try {
+      const p = path.join(localFontsDir, filename)
+      if (fs.existsSync(p)) {
+        const b64 = fs.readFileSync(p).toString('base64')
+        return `data:font/woff2;base64,${b64}`
+      }
+    } catch {}
+    return ''
+  }
+  const interRegular = readFontAsDataUrl('Inter-Regular.woff2')
+  const interBold = readFontAsDataUrl('Inter-Bold.woff2')
+  const fontCss = interRegular && interBold ? `
+  @font-face { font-family: 'InterLocal'; src: url(${interRegular}) format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }
+  @font-face { font-family: 'InterLocal'; src: url(${interBold}) format('woff2'); font-weight: 700; font-style: normal; font-display: swap; }
+  ` : ''
+  const fontStack = interRegular ? 'InterLocal, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif' : 'system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif'
+
+  const html2 = `<!doctype html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Scan Report ${id}</title>
+    <style>
+      ${fontCss}
+      :root{ --bg:#fff; --fg:#0f172a; --muted:#475569; --border:#e2e8f0; --soft:#f8fafc; --crit:#991b1b; --high:#b45309; --med:#92400e; --low:#065f46 }
+      @page { size: A4; margin: 18mm; }
+      *{box-sizing:border-box}
+      body{font-family:${fontStack}; color:var(--fg); margin:0; background:var(--bg)}
+      header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:12px}
+      .title{font-size:22px; font-weight:700; letter-spacing:.2px}
+      .meta{color:var(--muted); font-size:12px}
+      .grid{display:grid; grid-template-columns: repeat(4,1fr); gap:10px; margin:14px 0 22px}
+      .card{border:1px solid var(--border); background:var(--soft); padding:10px; border-radius:8px}
+      .kpi{font-size:11px; color:var(--muted); margin-bottom:4px}
+      .kpi-value{font-size:20px; font-weight:700}
+      h2{font-size:14px; margin:20px 0 8px}
+      table{width:100%; border-collapse:collapse; margin-bottom:12px; font-size:12px}
+      th,td{padding:8px 10px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top}
+      thead th{background:#f1f5f9; font-weight:600}
+      .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; color:#fff}
+      .sev-CRITICAL{background:var(--crit)} .sev-HIGH{background:var(--high)} .sev-MEDIUM{background:var(--med)} .sev-LOW{background:var(--low)}
+      .section{break-inside: avoid}
+      .muted{color:var(--muted)}
+      footer{margin-top:24px; color:var(--muted); font-size:11px}
+      @media print { a{color:inherit; text-decoration:none} thead{display:table-header-group} }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="title">OSS Sentinel • Scan Report</div>
+      <div class="meta">Scan <b>${id}</b> • Project <b>${scan.projectId}</b> • ${new Date(scan.createdAt).toLocaleString()}</div>
+    </header>
+
+    <section class="grid section">
+      <div class="card"><div class="kpi">Total Score</div><div class="kpi-value">${score.total}</div></div>
+      <div class="card"><div class="kpi">Critical</div><div class="kpi-value">${vulns.filter(v=>v.severity==='CRITICAL').length}</div></div>
+      <div class="card"><div class="kpi">High</div><div class="kpi-value">${vulns.filter(v=>v.severity==='HIGH').length}</div></div>
+      <div class="card"><div class="kpi">Medium / Low</div><div class="kpi-value">${vulns.filter(v=>v.severity==='MEDIUM'||v.severity==='LOW').length}</div></div>
+    </section>
+
+    <section class="section">
+      <h2>Dependencies (${deps.length})</h2>
+      <table>
+        <thead><tr><th style="width:60%">Name</th><th>Version</th></tr></thead>
+        <tbody>
+          ${deps.map(d => `<tr><td>${d.name}</td><td>${d.version}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2>Vulnerabilities (${vulns.length})</h2>
+      <table>
+        <thead><tr><th style="width:35%">Package</th><th>Severity</th><th>ID</th><th>Summary</th></tr></thead>
+        <tbody>
+          ${vulns.map(v => {
+            const pkg = deps.find(d => d.id === v.dependencyId)?.name ?? 'unknown'
+            return `<tr><td>${pkg}</td><td><span class="badge sev-${v.severity}">${v.severity}</span></td><td>${v.externalId}</td><td>${v.summary}</td></tr>`
+          }).join('')}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2>Licenses (${licenses.length})</h2>
+      <table>
+        <thead><tr><th style="width:50%">Package</th><th>SPDX</th><th>Status</th></tr></thead>
+        <tbody>
+          ${licenses.map(l => `<tr><td>${l.dependency}</td><td>${l.spdx}</td><td class="muted">${l.status}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    </section>
+
+    <footer>
+      Generated by OSS Sentinel • Printed from /scans/${id}/report.html
+    </footer>
+  </body>
+  </html>`
   return { scan, dependencies: deps, vulnerabilities: vulns, licenses, score }
 })
 
@@ -310,7 +414,113 @@ app.get('/scans/:id/report.html', async (req, reply) => {
   if (!scan) return reply.code(404).type('text/plain').send('Scan not found')
   const deps = getScanDeps(id)
   const vulns = getScanVulns(id)
+  const licenses = getScanLicFindings(id).map(lf => ({
+    dependency: deps.find(d => d.id === lf.dependencyId)?.name ?? 'unknown',
+    spdx: store.licenses.find(l => l.id === lf.licenseId)?.spdx ?? 'UNKNOWN',
+    status: lf.status
+  }))
   const score = await app.inject({ method: 'GET', url: `/scans/${id}/score` }).then(r => JSON.parse(r.payload))
+  // Build a print-optimized HTML (CSS-only) and embed local fonts when available
+  const readFontAsDataUrl = (filename: string) => {
+    try {
+      const p = path.join(localFontsDir, filename)
+      if (fs.existsSync(p)) {
+        const b64 = fs.readFileSync(p).toString('base64')
+        return `data:font/woff2;base64,${b64}`
+      }
+    } catch {}
+    return ''
+  }
+  const interRegular = readFontAsDataUrl('Inter-Regular.woff2')
+  const interBold = readFontAsDataUrl('Inter-Bold.woff2')
+  const fontCss = interRegular && interBold ? `
+  @font-face { font-family: 'InterLocal'; src: url(${interRegular}) format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }
+  @font-face { font-family: 'InterLocal'; src: url(${interBold}) format('woff2'); font-weight: 700; font-style: normal; font-display: swap; }
+  ` : ''
+  const fontStack = interRegular ? 'InterLocal, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif' : 'system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif'
+
+  const html2 = `<!doctype html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Scan Report ${id}</title>
+    <style>
+      ${fontCss}
+      :root{ --bg:#fff; --fg:#0f172a; --muted:#475569; --border:#e2e8f0; --soft:#f8fafc; --crit:#991b1b; --high:#b45309; --med:#92400e; --low:#065f46 }
+      @page { size: A4; margin: 18mm; }
+      *{box-sizing:border-box}
+      body{font-family:${fontStack}; color:var(--fg); margin:0; background:var(--bg)}
+      header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:12px}
+      .title{font-size:22px; font-weight:700; letter-spacing:.2px}
+      .meta{color:var(--muted); font-size:12px}
+      .grid{display:grid; grid-template-columns: repeat(4,1fr); gap:10px; margin:14px 0 22px}
+      .card{border:1px solid var(--border); background:var(--soft); padding:10px; border-radius:8px}
+      .kpi{font-size:11px; color:var(--muted); margin-bottom:4px}
+      .kpi-value{font-size:20px; font-weight:700}
+      h2{font-size:14px; margin:20px 0 8px}
+      table{width:100%; border-collapse:collapse; margin-bottom:12px; font-size:12px}
+      th,td{padding:8px 10px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top}
+      thead th{background:#f1f5f9; font-weight:600}
+      .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; color:#fff}
+      .sev-CRITICAL{background:var(--crit)} .sev-HIGH{background:var(--high)} .sev-MEDIUM{background:var(--med)} .sev-LOW{background:var(--low)}
+      .section{break-inside: avoid}
+      .muted{color:var(--muted)}
+      footer{margin-top:24px; color:var(--muted); font-size:11px}
+      @media print { a{color:inherit; text-decoration:none} thead{display:table-header-group} }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="title">OSS Sentinel • Scan Report</div>
+      <div class="meta">Scan <b>${id}</b> • Project <b>${scan.projectId}</b> • ${new Date(scan.createdAt).toLocaleString()}</div>
+    </header>
+
+    <section class="grid section">
+      <div class="card"><div class="kpi">Total Score</div><div class="kpi-value">${score.total}</div></div>
+      <div class="card"><div class="kpi">Critical</div><div class="kpi-value">${vulns.filter(v=>v.severity==='CRITICAL').length}</div></div>
+      <div class="card"><div class="kpi">High</div><div class="kpi-value">${vulns.filter(v=>v.severity==='HIGH').length}</div></div>
+      <div class="card"><div class="kpi">Medium / Low</div><div class="kpi-value">${vulns.filter(v=>v.severity==='MEDIUM'||v.severity==='LOW').length}</div></div>
+    </section>
+
+    <section class="section">
+      <h2>Dependencies (${deps.length})</h2>
+      <table>
+        <thead><tr><th style="width:60%">Name</th><th>Version</th></tr></thead>
+        <tbody>
+          ${deps.map(d => `<tr><td>${d.name}</td><td>${d.version}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2>Vulnerabilities (${vulns.length})</h2>
+      <table>
+        <thead><tr><th style="width:35%">Package</th><th>Severity</th><th>ID</th><th>Summary</th></tr></thead>
+        <tbody>
+          ${vulns.map(v => {
+            const pkg = deps.find(d => d.id === v.dependencyId)?.name ?? 'unknown'
+            return `<tr><td>${pkg}</td><td><span class="badge sev-${v.severity}">${v.severity}</span></td><td>${v.externalId}</td><td>${v.summary}</td></tr>`
+          }).join('')}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2>Licenses (${getScanLicFindings(id).length})</h2>
+      <table>
+        <thead><tr><th style="width:50%">Package</th><th>SPDX</th><th>Status</th></tr></thead>
+        <tbody>
+          ${licenses.map(l => `<tr><td>${l.dependency}</td><td>${l.spdx}</td><td class="muted">${l.status}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    </section>
+
+    <footer>
+      Generated by OSS Sentinel • Printed from /scans/${id}/report.html
+    </footer>
+  </body>
+  </html>`
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Scan Report ${id}</title>
   <style>body{font-family:system-ui,sans-serif;margin:24px} table{border-collapse:collapse;width:100%} th,td{border-bottom:1px solid #eee;padding:6px;text-align:left}</style>
   </head><body>
@@ -330,7 +540,7 @@ app.get('/scans/:id/report.html', async (req, reply) => {
   }).join('')}
   </tbody></table>
   </body></html>`
-  return reply.type('text/html').send(html)
+  return reply.type('text/html').send(html2)
 })
 
 function groupByPackage(vulns: { dependencyId?: string; externalId: string; severity: any; summary: string; references: string[] }[]): Record<string, any[]> {

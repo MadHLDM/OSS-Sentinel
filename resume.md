@@ -33,10 +33,10 @@ It's a **dependency security dashboard** that helps developers understand the ri
 - [x] **Golden test data** - Lockfiles and expected normalized outputs in `demo/samples/`
 
 ### Reports & Export (HIGH PRIORITY)
-- [ ] **PDF Generation** - Currently returns HTTP 501, needs Playwright/Puppeteer implementation
-- [ ] **Print-friendly report route** - Create `/scans/:id/report.html` with CSS-only layout
-- [ ] **Embed local fonts** - Ensure deterministic PDF rendering
-- [ ] **Report styling** - Professional layout for generated reports
+- [x] **PDF Generation** - Implemented via Playwright at `/scans/:id/report.pdf` (requires Chromium installed)
+- [x] **Print-friendly report route** - `/scans/:id/report.html` with CSS-only, print-optimized layout
+- [x] **Embed local fonts** - Inline WOFF2 support from `apps/api/assets/fonts/` for deterministic PDFs
+- [x] **Report styling** - Professional, paginated layout with KPI cards and tables
 
 ### Web Dashboard (MEDIUM PRIORITY)
 - [ ] **Install and configure Tailwind CSS** - Planned but not implemented
@@ -91,7 +91,7 @@ It's a **dependency security dashboard** that helps developers understand the ri
 - [ ] **Integration APIs** - Webhooks for CI/CD systems
 
 ### Known Issues
-- [ ] **PDF endpoint returns 501** - `apps/api/src/server.ts:283`
+- [ ] **PDF export requires browser install** - Run `pnpm exec playwright install chromium` if `/report.pdf` returns 501
 - [ ] **Test command fails** - Vitest dependency missing in core package
 - [ ] **No error boundaries** - Frontend needs better error handling
 - [ ] **Missing input validation** - Some endpoints lack proper validation

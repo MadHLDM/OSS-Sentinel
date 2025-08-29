@@ -40,6 +40,11 @@ See `implementation.md` for the full plan and milestones.
   - Run tests: `pnpm test:e2e`
   - Backend PDF endpoint: implemented at `GET /scans/:id/report.pdf` (requires Chromium installed)
 
+## Reports & Export
+- Print-friendly HTML: `GET /scans/:id/report.html` (CSS-only, no JS required)
+- PDF export: `GET /scans/:id/report.pdf` (renders the HTML via Playwright/Chromium)
+- Local fonts (deterministic PDF): drop `Inter-Regular.woff2` and `Inter-Bold.woff2` into `apps/api/assets/fonts/` and rebuild. The server inlines them via data URLs for consistent rendering. Falls back to the system font stack if missing.
+
 Prisma-backed checks (optional):
 - To run DB verification, set `RUN_PRISMA=1` and ensure schema is pushed to a test DB. The test auto-initializes when possible, otherwise returns early.
 - Example: `RUN_PRISMA=1 pnpm -C apps/api build && RUN_PRISMA=1 pnpm --filter @oss-sentinel/api test`
