@@ -1,0 +1,8 @@
+[
+  { "package": "express", "spdx": "MIT" },
+  { "package": "lodash",  "spdx": "MIT" },
+  { "package": "jsonwebtoken",  "spdx": "MIT" },
+  { "package": "axios",  "spdx": "MIT" },
+  { "package": "debug",  "spdx": "MIT" }
+]
+

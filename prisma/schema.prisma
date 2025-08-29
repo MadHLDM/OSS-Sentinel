@@ -1,0 +1,70 @@
+// Prisma data model (SQLite)
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Project {
+  id        String  @id @default(cuid())
+  name      String
+  repoUrl   String?
+  createdAt DateTime @default(now())
+  scans     Scan[]
+}
+
+model Scan {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id])
+  createdAt  DateTime @default(now())
+  status     String
+  scoreTotal Int
+  deps       Dependency[]
+  vulns      Vulnerability[]
+  licenses   LicenseFinding[]
+}
+
+model Dependency {
+  id        String @id @default(cuid())
+  scanId    String
+  scan      Scan   @relation(fields: [scanId], references: [id])
+  name      String
+  version   String
+  ecosystem String
+  vulnerabilities Vulnerability[]
+  licenseFindings LicenseFinding[]
+}
+
+model Vulnerability {
+  id            String @id @default(cuid())
+  scanId        String
+  scan          Scan   @relation(fields: [scanId], references: [id])
+  dependencyId  String?
+  dependency    Dependency? @relation(fields: [dependencyId], references: [id])
+  externalId    String
+  severity      String
+  summary       String
+  referencesJson String
+}
+
+model License {
+  id       String @id @default(cuid())
+  spdx     String @unique
+  riskLevel String
+  findings LicenseFinding[]
+}
+
+model LicenseFinding {
+  id          String @id @default(cuid())
+  scanId      String
+  scan        Scan   @relation(fields: [scanId], references: [id])
+  dependencyId String
+  dependency  Dependency @relation(fields: [dependencyId], references: [id])
+  licenseId   String
+  license     License @relation(fields: [licenseId], references: [id])
+  status      String
+}
