@@ -1,4 +1,4 @@
-import type { Store, Project, Scan, Dependency, Vulnerability, License, LicenseFinding } from '../types'
+import type { Store, Project, Scan, Dependency, Vulnerability, License, LicenseFinding, ScanProgress } from '../types'
 
 const genId = (p: string) => `${p}_${Math.random().toString(36).slice(2, 10)}`
 
@@ -9,6 +9,8 @@ export class MemoryStore implements Store {
   vulnerabilities: Vulnerability[] = []
   licenses: License[] = []
   licenseFindings: LicenseFinding[] = []
+  // in-memory progress map only
+  scanProgressMap: Record<string, ScanProgress> = {}
 
   createProject(name: string, repoUrl?: string | null): Project {
     const p: Project = { id: genId('proj'), name, repoUrl: repoUrl ?? null, createdAt: new Date().toISOString() }
@@ -42,4 +44,12 @@ export class MemoryStore implements Store {
     this.licenseFindings.push(lf)
     return lf
   }
+
+  // progress helpers (in-memory only)
+  setScanProgress(scanId: string, phase: string, percent: number, message?: string) {
+    const p: ScanProgress = { scanId, phase, percent, message, updatedAt: new Date().toISOString() }
+    this.scanProgressMap[scanId] = p
+    return p
+  }
+  getScanProgress(scanId: string): ScanProgress | undefined { return this.scanProgressMap[scanId] }
 }

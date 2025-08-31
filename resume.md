@@ -51,12 +51,12 @@ It's a **dependency security dashboard** that helps developers understand the ri
 - [ ] **Accessibility improvements** - Keyboard navigation, ARIA labels, proper contrast
 
 ### Core Library Integration 
-- [ ] **API integration with core library** - Currently API uses in-memory store instead of actual core functions
-- [ ] **Lockfile upload handling** - File upload endpoint for package-lock.json
-- [ ] **Local path scanning** - Scan projects from local filesystem paths
-- [ ] **Real-time scan status** - Progress tracking for long-running scans
-- [ ] **License policy configuration** - Allow customizable license rules
-- [ ] **Vulnerability data updates** - System to refresh offline seed data
+- [x] **API integration with core library** - API now calls core: parse lockfiles, collect vulns, evaluate licenses, compute score
+- [x] **Lockfile upload handling** - `POST /scans/upload` accepts `package-lock.json` and `pnpm-lock.yaml`
+- [x] **Local path scanning** - `POST /scans` accepts `{ projectId, path }` to scan from filesystem
+- [x] **Real-time scan status** - `GET /scans/:id/status` (polling) and `GET /scans/:id/events` (SSE) with progress
+- [x] **License policy configuration** - `GET/PUT /license-policy` with persisted policy JSON
+- [x] **Vulnerability data updates** - `GET/POST /vulns/seed` to inspect/refresh offline seed data (config via `VULN_SEED_DIR`)
 
 ### API & Documentation
 - [ ] **OpenAPI documentation** - Generate and serve at `/docs` endpoint
@@ -83,6 +83,7 @@ It's a **dependency security dashboard** that helps developers understand the ri
 
 ### Advanced Features (LOW PRIORITY)
 - [ ] **Multiple ecosystem support** - Yarn, pnpm, other package managers beyond npm
+- [x] **pnpm lockfile parsing** - (`pnpm-lock.yaml`)
 - [ ] **Network-based vulnerability fetching** - Optional online vulnerability databases
 - [ ] **Custom vulnerability rules** - User-defined security policies
 - [ ] **Dependency graph visualization** - Interactive dependency tree
@@ -92,9 +93,9 @@ It's a **dependency security dashboard** that helps developers understand the ri
 
 ### Known Issues
 - [ ] **PDF export requires browser install** - Run `pnpm exec playwright install chromium` if `/report.pdf` returns 501
-- [ ] **Test command fails** - Vitest dependency missing in core package
-- [ ] **No error boundaries** - Frontend needs better error handling
-- [ ] **Missing input validation** - Some endpoints lack proper validation
+- [ ] **License SPDX shows UNKNOWN for uploads** - When scanning by upload alone (no `node_modules` on disk), SPDX cannot be resolved; use path scanning with installed deps
+- [ ] **Basic validation only** - Some endpoints still lack strict Zod validation
+- [ ] **Frontend error boundaries missing** - Needs better error handling
 
 ## The bigger picture:
 

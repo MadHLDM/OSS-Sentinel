@@ -5,13 +5,18 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run || echo 'vitest not installed'"
   },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
   "devDependencies": {
-    "typescript": "^5.5.4",
-    "@types/node": "^20.14.12"
+    "@types/node": "^20.14.12",
+    "typescript": "^5.5.4"
   }
 }

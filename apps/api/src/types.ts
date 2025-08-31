@@ -16,3 +16,5 @@ export interface Store {
   licenseFindings: LicenseFinding[]
 }
 
+// Optional runtime progress tracking (in-memory)
+export interface ScanProgress { scanId: ID; phase: string; percent: number; message?: string; updatedAt: string }

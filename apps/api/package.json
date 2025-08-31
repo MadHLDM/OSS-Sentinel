@@ -15,6 +15,7 @@
     "@oss-sentinel/core": "workspace:*",
     "@prisma/client": "^6.15.0",
     "fastify": "^4.28.1",
+    "@fastify/multipart": "^8.3.1",
     "playwright": "^1.55.0",
     "zod": "^3.23.8"
   },

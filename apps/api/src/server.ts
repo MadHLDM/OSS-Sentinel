@@ -1,4 +1,5 @@
 import Fastify from 'fastify'
+import fastifyMultipart from '@fastify/multipart'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -7,6 +8,7 @@ import type { Dependency as ApiDep, Project, Scan } from './types'
 import {
   normalizeDeps,
   parsePackageLock,
+  parsePnpmLock,
   collectVulnsFor,
   evaluateLicense,
   computeScore,
@@ -16,8 +18,10 @@ import {
 const DEMO = process.env.DEMO === '1' || process.env.DEMO === 'true'
 const USE_PRISMA = process.env.PRISMA === '1' || process.env.USE_PRISMA === '1' || process.env.PRISMA === 'true' || process.env.USE_PRISMA === 'true'
 const PORT = Number.isNaN(Number(process.env.PORT)) ? 3333 : parseInt(process.env.PORT as string)
+const VULN_SEED_DIR = process.env.VULN_SEED_DIR
 
 const app = Fastify({ logger: true })
+await app.register(fastifyMultipart)
 const store = new MemoryStore()
 let prismaPersistence: any = null
 
@@ -39,6 +43,58 @@ const repoSeedDir = path.resolve(__dirname, '../../../demo/seeds')
 // Optional local fonts directory for HTML report
 const repoRoot = path.resolve(__dirname, '../../..')
 const localFontsDir = path.join(repoRoot, 'apps/api/assets/fonts')
+
+// License policy (configurable)
+type LicensePolicy = Record<string, 'allowed'|'warn'|'blocked'>
+const DEFAULT_LICENSE_POLICY: LicensePolicy = {
+  'MIT': 'allowed', 'Apache-2.0': 'allowed', 'ISC': 'allowed', 'BSD-2-Clause': 'allowed', 'BSD-3-Clause': 'allowed',
+  'LGPL-3.0': 'warn', 'MPL-2.0': 'warn', 'GPL-2.0': 'blocked', 'GPL-3.0': 'blocked'
+}
+const policyFile = path.join(repoRoot, 'apps/api/data/license-policy.json')
+let licensePolicy: LicensePolicy = DEFAULT_LICENSE_POLICY
+function loadLicensePolicy() {
+  try {
+    if (fs.existsSync(policyFile)) {
+      const data = JSON.parse(fs.readFileSync(policyFile, 'utf8'))
+      if (data && typeof data === 'object') licensePolicy = data as LicensePolicy
+    }
+  } catch {}
+}
+function saveLicensePolicy() {
+  try {
+    const dir = path.dirname(policyFile)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(policyFile, JSON.stringify(licensePolicy, null, 2))
+  } catch (err) {
+    app.log.warn({ err }, 'Failed to persist license policy')
+  }
+}
+loadLicensePolicy()
+
+function getPackageSpdxFromNodeModules(projectPath: string, pkgName: string): string | undefined {
+  try {
+    const nm = path.join(projectPath, 'node_modules')
+    const parts = pkgName.split('/')
+    const pkgPath = path.join(nm, ...parts, 'package.json')
+    if (!fs.existsSync(pkgPath)) return undefined
+    const text = fs.readFileSync(pkgPath, 'utf8')
+    const json = JSON.parse(text)
+    let spdx: string | undefined
+    if (typeof json.license === 'string' && json.license.trim()) spdx = String(json.license).trim()
+    else if (json.license && typeof json.license === 'object' && typeof json.license.type === 'string') spdx = String(json.license.type).trim()
+    else if (Array.isArray(json.licenses) && json.licenses.length) {
+      const first = json.licenses[0]
+      if (typeof first === 'string') spdx = first.trim()
+      else if (first && typeof first.type === 'string') spdx = String(first.type).trim()
+    }
+    if (!spdx) return undefined
+    spdx = spdx.replace(/\s+/g, ' ').trim()
+    const m = spdx.match(/[A-Za-z0-9.+-]+/)
+    return m ? m[0] : spdx
+  } catch {
+    return undefined
+  }
+}
 
 // load demo seeds (only when store is empty)
 async function loadSeedsIfNeeded() {
@@ -98,6 +154,82 @@ app.options('/*', async (req, reply) => {
 function getScanDeps(scanId: string) { return store.dependencies.filter(d => d.scanId === scanId) }
 function getScanVulns(scanId: string) { return store.vulnerabilities.filter(v => v.scanId === scanId) }
 function getScanLicFindings(scanId: string) { return store.licenseFindings.filter(l => l.scanId === scanId) }
+function getSeedDir() { return VULN_SEED_DIR ? path.resolve(VULN_SEED_DIR) : repoSeedDir }
+
+// Async scan runner with progress
+async function runScan(scan: Scan, input: { files?: { filename: string; content: string }[]; path?: string }) {
+  try {
+    store.setScanProgress(scan.id, 'initializing', 5, 'Starting scan')
+
+    // Parse lockfile if provided
+    let deps: CoreDep[] = []
+    const lock = input.files?.find(f => f.filename.includes('package-lock.json') || f.filename.includes('pnpm-lock.yaml'))
+    if (lock?.content) {
+      deps = lock.filename.includes('pnpm-lock.yaml') ? parsePnpmLock(lock.content) : parsePackageLock(lock.content)
+    }
+    if (!deps.length && input.path) {
+      try {
+        const npmPath = path.join(input.path, 'package-lock.json')
+        const pnpmPath = path.join(input.path, 'pnpm-lock.yaml')
+        if (fs.existsSync(npmPath)) {
+          const text = fs.readFileSync(npmPath, 'utf8')
+          deps = parsePackageLock(text)
+        } else if (fs.existsSync(pnpmPath)) {
+          const text = fs.readFileSync(pnpmPath, 'utf8')
+          deps = parsePnpmLock(text)
+        }
+      } catch {}
+    }
+    if (!deps.length && DEMO) {
+      // fallback to seeds in demo
+      const seedDeps = JSON.parse(fs.readFileSync(path.join(repoSeedDir, 'dependencies.json'), 'utf8')) as CoreDep[]
+      deps = normalizeDeps(seedDeps)
+    }
+
+    store.setScanProgress(scan.id, 'dependencies', 25, `Parsed ${deps.length} dependencies`)
+
+    const depRows = store.addDependencies(deps.map(d => ({ scanId: scan.id, name: d.name, version: d.version, ecosystem: 'npm' as const })))
+    if (prismaPersistence) await prismaPersistence.saveDependencies(depRows)
+
+    // licenses with policy
+    for (const d of depRows) {
+      const spdx = input.path ? getPackageSpdxFromNodeModules(input.path, d.name) : undefined
+      const lf = evaluateLicense(d.name, spdx, licensePolicy)
+      const lic = store.upsertLicense(lf.spdx, lf.status === 'blocked' ? 'high' : lf.status === 'warn' ? 'medium' : 'low')
+      const added = store.addLicenseFinding({ scanId: scan.id, dependencyId: d.id, licenseId: lic.id, status: lf.status })
+      if (prismaPersistence) {
+        const dbLic = await prismaPersistence.upsertLicense(lic.spdx, lic.riskLevel)
+        await prismaPersistence.saveLicenseFinding({ ...added, licenseId: dbLic.id })
+      }
+    }
+    store.setScanProgress(scan.id, 'licenses', 45, 'License policy applied')
+
+    // vulnerabilities (seed-backed)
+    const vmap = collectVulnsFor(depRows.map(d => ({ name: d.name, version: d.version, ecosystem: 'npm' })), getSeedDir())
+    for (const d of depRows) {
+      const vs = vmap[d.name] ?? []
+      for (const v of vs) {
+        const created = store.addVulnerabilities([{ scanId: scan.id, dependencyId: d.id, externalId: v.externalId, severity: v.severity, summary: v.summary, references: v.references }])
+        if (prismaPersistence) await prismaPersistence.saveVulnerabilities(created)
+      }
+    }
+    store.setScanProgress(scan.id, 'vulnerabilities', 70, 'Vulnerability matching complete')
+
+    // scoring
+    const breakdown = computeScore({
+      dependencies: depRows.map(d => ({ name: d.name, version: d.version, ecosystem: 'npm' })),
+      vulnsByPackage: groupByPackage(getScanVulns(scan.id)),
+      licenseFindings: getScanLicFindings(scan.id).map(lf => ({ package: depRows.find(d => d.id === lf.dependencyId)?.name ?? 'unknown', spdx: store.licenses.find(l => l.id === lf.licenseId)?.spdx ?? 'UNKNOWN', status: lf.status }))
+    })
+    scan.status = 'done'
+    scan.scoreTotal = breakdown.total
+    store.setScanProgress(scan.id, 'complete', 100, 'Scan complete')
+  } catch (err) {
+    app.log.error({ err }, 'Scan failed')
+    scan.status = 'failed'
+    store.setScanProgress(scan.id, 'failed', 100, 'Scan failed')
+  }
+}
 
 // Routes
 app.get('/', async (req, reply) => {
@@ -163,62 +295,36 @@ app.post('/scans', async (req, reply) => {
   const proj = store.getProject(body.projectId)
   if (!proj) return reply.code(404).send({ code: 'NOT_FOUND', message: 'project not found' })
 
-  // Create scan
+  // Create and queue scan
   const scan: Scan = { id: `scan_${Date.now()}`, projectId: proj.id, createdAt: new Date().toISOString(), status: 'pending', scoreTotal: 0 }
   store.addScan(scan)
   if (prismaPersistence) await prismaPersistence.saveScan(scan)
+  store.setScanProgress(scan.id, 'queued', 1, 'Scan queued')
+  runScan(scan, { files: body.files, path: body.path })
+  return reply.code(202).send({ id: scan.id, projectId: scan.projectId, createdAt: scan.createdAt, status: scan.status })
+})
 
-  // Parse lockfile if provided
-  let deps: CoreDep[] = []
-  const lock = body.files?.find(f => f.filename.includes('package-lock.json'))
-  if (lock?.content) deps = parsePackageLock(lock.content)
-  if (!deps.length && body.path) {
-    try {
-      const lockPath = path.join(body.path, 'package-lock.json')
-      const text = fs.readFileSync(lockPath, 'utf8')
-      deps = parsePackageLock(text)
-    } catch {}
+// Multipart upload of package-lock.json
+app.post('/scans/upload', async (req: any, reply) => {
+  try {
+    const mp = await req.file()
+    const projectId = (req.query?.projectId || req.headers['x-project-id'] || req.body?.projectId) as string | undefined
+    if (!projectId) return reply.code(400).send({ code: 'BAD_REQUEST', message: 'projectId is required (query, header, or form field)' })
+    const proj = store.getProject(projectId)
+    if (!proj) return reply.code(404).send({ code: 'NOT_FOUND', message: 'project not found' })
+    if (!mp) return reply.code(400).send({ code: 'BAD_REQUEST', message: 'missing file' })
+    if (!/package-lock\.json$/i.test(mp.filename) && !/pnpm-lock\.yaml$/i.test(mp.filename)) app.log.warn('Uploaded file is not a recognized lockfile (package-lock.json or pnpm-lock.yaml)')
+    const buf = await mp.toBuffer()
+    const content = buf.toString('utf8')
+    const scan: Scan = { id: `scan_${Date.now()}`, projectId: proj.id, createdAt: new Date().toISOString(), status: 'pending', scoreTotal: 0 }
+    store.addScan(scan)
+    store.setScanProgress(scan.id, 'queued', 1, 'Scan queued')
+    runScan(scan, { files: [{ filename: mp.filename, content }] })
+    return reply.code(202).send({ id: scan.id, projectId: scan.projectId, createdAt: scan.createdAt, status: scan.status })
+  } catch (err) {
+    app.log.error({ err }, 'Upload failed')
+    return reply.code(400).send({ code: 'BAD_REQUEST', message: 'invalid multipart upload' })
   }
-  if (!deps.length && DEMO) {
-    // fallback to seeds in demo
-    const seedDeps = JSON.parse(fs.readFileSync(path.join(repoSeedDir, 'dependencies.json'), 'utf8')) as CoreDep[]
-    deps = normalizeDeps(seedDeps)
-  }
-
-  const depRows = store.addDependencies(deps.map(d => ({ scanId: scan.id, name: d.name, version: d.version, ecosystem: 'npm' as const })))
-  if (prismaPersistence) await prismaPersistence.saveDependencies(depRows)
-
-  // licenses
-  for (const d of depRows) {
-    const lf = evaluateLicense(d.name, undefined)
-    const lic = store.upsertLicense(lf.spdx, lf.status === 'blocked' ? 'high' : lf.status === 'warn' ? 'medium' : 'low')
-    const added = store.addLicenseFinding({ scanId: scan.id, dependencyId: d.id, licenseId: lic.id, status: lf.status })
-    if (prismaPersistence) {
-      const dbLic = await prismaPersistence.upsertLicense(lic.spdx, lic.riskLevel)
-      await prismaPersistence.saveLicenseFinding({ ...added, licenseId: dbLic.id })
-    }
-  }
-
-  // vulnerabilities (seed-backed)
-  const vmap = collectVulnsFor(depRows.map(d => ({ name: d.name, version: d.version, ecosystem: 'npm' })), repoSeedDir)
-  for (const d of depRows) {
-    const vs = vmap[d.name] ?? []
-    for (const v of vs) {
-      const created = store.addVulnerabilities([{ scanId: scan.id, dependencyId: d.id, externalId: v.externalId, severity: v.severity, summary: v.summary, references: v.references }])
-      if (prismaPersistence) await prismaPersistence.saveVulnerabilities(created)
-    }
-  }
-
-  // scoring
-  const breakdown = computeScore({
-    dependencies: depRows.map(d => ({ name: d.name, version: d.version, ecosystem: 'npm' })),
-    vulnsByPackage: groupByPackage(getScanVulns(scan.id)),
-    licenseFindings: getScanLicFindings(scan.id).map(lf => ({ package: depRows.find(d => d.id === lf.dependencyId)?.name ?? 'unknown', spdx: store.licenses.find(l => l.id === lf.licenseId)?.spdx ?? 'UNKNOWN', status: lf.status }))
-  })
-  scan.status = 'done'
-  scan.scoreTotal = breakdown.total
-
-  return { id: scan.id, projectId: scan.projectId, createdAt: scan.createdAt, status: scan.status, scoreTotal: scan.scoreTotal }
 })
 
 app.get('/scans/:id', async (req, reply) => {
@@ -233,7 +339,40 @@ app.get('/scans/:id', async (req, reply) => {
     medium: vulns.filter(v => v.severity === 'MEDIUM').length,
     low: vulns.filter(v => v.severity === 'LOW').length
   }
-  return { ...scan, kpis }
+  const progress = store.getScanProgress(id)
+  return { ...scan, kpis, progress }
+})
+
+// Scan status (polling)
+app.get('/scans/:id/status', async (req, reply) => {
+  const id = (req.params as any).id
+  const scan = store.getScan(id)
+  if (!scan) return reply.code(404).send({ code: 'NOT_FOUND', message: 'scan not found' })
+  return { id: scan.id, status: scan.status, progress: store.getScanProgress(id) }
+})
+
+// Scan events (SSE)
+app.get('/scans/:id/events', async (req, reply) => {
+  const id = (req.params as any).id
+  const scan = store.getScan(id)
+  if (!scan) return reply.code(404).send({ code: 'NOT_FOUND', message: 'scan not found' })
+  reply.raw.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive'
+  })
+  const send = (ev: any) => reply.raw.write(`data: ${JSON.stringify(ev)}\n\n`)
+  send({ type: 'status', scan: { id: scan.id, status: scan.status }, progress: store.getScanProgress(id) })
+  const iv = setInterval(() => {
+    const s = store.getScan(scan.id)
+    if (!s) return
+    send({ type: 'status', scan: { id: s.id, status: s.status }, progress: store.getScanProgress(id) })
+    if (s.status === 'done' || s.status === 'failed') {
+      clearInterval(iv)
+      try { reply.raw.end() } catch {}
+    }
+  }, 500)
+  req.raw.on('close', () => clearInterval(iv))
 })
 
 app.get('/scans/:id/dependencies', async (req, reply) => {
@@ -255,6 +394,22 @@ app.get('/scans/:id/licenses', async (req, reply) => {
     spdx: store.licenses.find(l => l.id === lf.licenseId)?.spdx ?? 'UNKNOWN',
     status: lf.status
   }))
+})
+
+// License policy
+app.get('/license-policy', async () => ({ policy: licensePolicy }))
+app.put('/license-policy', async (req, reply) => {
+  const body = (req.body ?? {}) as { policy?: Record<string, string> }
+  if (!body.policy || typeof body.policy !== 'object') return reply.code(400).send({ code: 'BAD_REQUEST', message: 'policy object required' })
+  const next: LicensePolicy = {}
+  for (const [k, v] of Object.entries(body.policy)) {
+    const vv = String(v).toLowerCase()
+    if (vv === 'allowed' || vv === 'warn' || vv === 'blocked') next[k] = vv
+  }
+  if (!Object.keys(next).length) return reply.code(400).send({ code: 'BAD_REQUEST', message: 'no valid entries' })
+  licensePolicy = next
+  saveLicensePolicy()
+  return { ok: true, policy: licensePolicy }
 })
 
 app.get('/scans/:id/score', async (req, reply) => {
@@ -541,6 +696,38 @@ app.get('/scans/:id/report.html', async (req, reply) => {
   </tbody></table>
   </body></html>`
   return reply.type('text/html').send(html2)
+})
+
+// Vulnerability seed updates
+app.get('/vulns/seed', async () => {
+  const dir = getSeedDir()
+  const file = path.join(dir, 'vulnerabilities.json')
+  const info = fs.existsSync(file) ? fs.statSync(file) : null
+  let count = 0
+  if (fs.existsSync(file)) {
+    try { const arr = JSON.parse(fs.readFileSync(file, 'utf8')); count = Array.isArray(arr) ? arr.length : 0 } catch {}
+  }
+  return { dir, file, exists: !!info, size: info?.size ?? 0, mtime: info?.mtime ?? null, count }
+})
+app.post('/vulns/seed', async (req: any, reply) => {
+  const dir = getSeedDir()
+  const file = path.join(dir, 'vulnerabilities.json')
+  const ct = (req.headers['content-type'] as string) || ''
+  let data: any = null
+  if (ct.includes('multipart/form-data')) {
+    const mp = await req.file()
+    if (!mp) return reply.code(400).send({ code: 'BAD_REQUEST', message: 'missing file' })
+    data = JSON.parse((await mp.toBuffer()).toString('utf8'))
+  } else {
+    data = req.body
+  }
+  if (!Array.isArray(data)) return reply.code(400).send({ code: 'BAD_REQUEST', message: 'Expected array of vulnerabilities' })
+  for (const v of data) {
+    if (!v || typeof v !== 'object' || !v.package || !v.externalId || !v.severity) return reply.code(400).send({ code: 'BAD_REQUEST', message: 'Invalid vulnerability entry' })
+  }
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(file, JSON.stringify(data, null, 2))
+  return { ok: true, written: data.length, file }
 })
 
 function groupByPackage(vulns: { dependencyId?: string; externalId: string; severity: any; summary: string; references: string[] }[]): Record<string, any[]> {

@@ -57,7 +57,17 @@ What’s covered:
 ## Notes
 - PDF generation implemented via Playwright (Chromium). Install browsers with `pnpm exec playwright install chromium`.
 - Prisma client adapter is TODO; API uses an in-memory store and seeds when `DEMO=1`.
-- Lockfile parser starts with `package-lock.json` v2/v3.
+- Lockfile parsers: `package-lock.json` v2/v3 and `pnpm-lock.yaml`.
+
+### Core Library Integration (API)
+- Upload lockfile: `POST /scans/upload` (multipart form) with file `package-lock.json` and `projectId` (query/header/form).
+- Local path scan: `POST /scans` with `{ projectId, path }` or `{ projectId, files: [{ filename, content }] }`; returns 202 and scan id.
+- Real-time status: `GET /scans/:id/status` (polling) and `GET /scans/:id/events` (Server-Sent Events stream).
+- License policy: `GET /license-policy`, `PUT /license-policy` with `{ policy: { SPDX: 'allowed'|'warn'|'blocked', ... } }`.
+- Vulnerability seeds (offline):
+  - Inspect: `GET /vulns/seed`
+  - Update: `POST /vulns/seed` with JSON body (array) or multipart file to overwrite `vulnerabilities.json`.
+  - Configure directory via `VULN_SEED_DIR` env; defaults to `demo/seeds/`.
 
 ## Prisma (SQLite) Persistence
 - Configure DB URL (already provided): see `.env` with `DATABASE_URL="file:./prisma/dev.db"`.
