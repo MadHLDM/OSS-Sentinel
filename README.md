@@ -4,8 +4,6 @@ Actionable, local-first dependency risk insights. Analyze lockfiles, surface vul
 
 • React + Vite web app • Fastify API • TypeScript monorepo • Works offline with seeds • PDF export
 
-![Dashboard Light](docs/assets/dashboard-light.png)
-
 ## Highlights
 
 - Dashboard: KPIs (score, severity), charts (severity bar, license pie), responsive layout, dark mode
