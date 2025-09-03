@@ -2,18 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OSS Sentinel</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem; }
-      .kpi { display: inline-block; margin-right: 1rem; padding: 0.5rem 0.75rem; background: #f3f4f6; border-radius: 6px; }
-      table { border-collapse: collapse; width: 100%; }
-      th, td { border-bottom: 1px solid #eee; padding: 0.5rem; text-align: left; }
-    </style>
+    <meta name="description" content="Dependency Risk Dashboard: lockfile analysis, vulnerabilities, licenses, and exportable reports." />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)" />
+    <meta property="og:title" content="OSS Sentinel — Dependency Risk Dashboard" />
+    <meta property="og:description" content="Analyze dependencies, visualize risks, and export reports." />
   </head>
-  <body>
-    <div id="root"></div>
+  <body class="min-h-screen bg-white text-gray-900">
+    <a href="#page-title" class="sr-only focus:not-sr-only absolute left-4 top-4 rounded-md bg-white px-3 py-2 text-sm font-medium text-brand-700 shadow focus:outline-none focus:ring-2 focus:ring-brand-500">Skip to content</a>
+    <div id="root" class="mx-auto max-w-7xl px-4 py-6"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
   </html>
-

@@ -8,6 +8,8 @@
   "scripts": {
     "build": "pnpm -r --workspace-concurrency=1 build",
     "dev": "node ./scripts/dev-info.cjs",
+    "dev:demo": "concurrently -k -n API,WEB -c blue,magenta \"pnpm --filter @oss-sentinel/api build && cross-env DEMO=1 pnpm --filter @oss-sentinel/api demo\" \"pnpm --filter @oss-sentinel/web dev\"",
+    "capture:screens": "ts-node ./scripts/capture-screenshots.ts",
     "test": "pnpm -r test",
     "test:unit": "vitest run",
     "test:watch": "vitest",
