@@ -13,4 +13,3 @@ Before opening a PR:
 - Keep changes minimal and focused.
 
 We use the MIT license.
-

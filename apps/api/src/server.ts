@@ -10,6 +10,7 @@ import {
   parsePackageLock,
   parsePnpmLock,
   collectVulnsFor,
+  collectVulnsFromOSV,
   evaluateLicense,
   computeScore,
   type Dependency as CoreDep
@@ -19,6 +20,7 @@ const DEMO = process.env.DEMO === '1' || process.env.DEMO === 'true'
 const USE_PRISMA = process.env.PRISMA === '1' || process.env.USE_PRISMA === '1' || process.env.PRISMA === 'true' || process.env.USE_PRISMA === 'true'
 const PORT = Number.isNaN(Number(process.env.PORT)) ? 3333 : parseInt(process.env.PORT as string)
 const VULN_SEED_DIR = process.env.VULN_SEED_DIR
+const VULN_PROVIDER = (process.env.VULN_PROVIDER || '').toLowerCase() || (DEMO ? 'seed' : 'osv')
 
 const app = Fastify({ logger: true })
 await app.register(fastifyMultipart)
@@ -204,8 +206,21 @@ async function runScan(scan: Scan, input: { files?: { filename: string; content:
     }
     store.setScanProgress(scan.id, 'licenses', 45, 'License policy applied')
 
-    // vulnerabilities (seed-backed)
-    const vmap = collectVulnsFor(depRows.map(d => ({ name: d.name, version: d.version, ecosystem: 'npm' })), getSeedDir())
+    // vulnerabilities: online OSV (default when not DEMO) or seed-backed
+    const depInputs = depRows.map(d => ({ name: d.name, version: d.version, ecosystem: 'npm' as const }))
+    let vmap: Record<string, any[]> = {}
+    if (VULN_PROVIDER === 'osv') {
+      try {
+        vmap = await collectVulnsFromOSV(depInputs)
+        store.setScanProgress(scan.id, 'vulnerabilities', 65, 'Vulnerabilities fetched from OSV')
+      } catch (err) {
+        app.log.warn({ err }, 'OSV fetch failed; falling back to seed data')
+        vmap = collectVulnsFor(depInputs, getSeedDir())
+        store.setScanProgress(scan.id, 'vulnerabilities', 65, 'OSV failed; using seed vulnerabilities')
+      }
+    } else {
+      vmap = collectVulnsFor(depInputs, getSeedDir())
+    }
     for (const d of depRows) {
       const vs = vmap[d.name] ?? []
       for (const v of vs) {
@@ -224,12 +239,13 @@ async function runScan(scan: Scan, input: { files?: { filename: string; content:
     scan.status = 'done'
     scan.scoreTotal = breakdown.total
     store.setScanProgress(scan.id, 'complete', 100, 'Scan complete')
-  } catch (err) {
-    app.log.error({ err }, 'Scan failed')
-    scan.status = 'failed'
-    store.setScanProgress(scan.id, 'failed', 100, 'Scan failed')
+    } catch (err: any) {
+      app.log.error({ err }, 'Scan failed')
+      scan.status = 'failed'
+      const msg = err?.message ? `Scan failed: ${String(err.message)}` : 'Scan failed'
+      store.setScanProgress(scan.id, 'failed', 100, msg)
+    }
   }
-}
 
 // Routes
 app.get('/', async (req, reply) => {

@@ -46,7 +46,12 @@ export function App() {
   const [scan, setScan] = useState<Scan | null>(null)
   const [scanStatus, setScanStatus] = useState<string | null>(null)
   const [scanProgress, setScanProgress] = useState<{ step?: string; ratio?: number; message?: string } | null>(null)
-  const [theme, setTheme] = useState<'light'|'dark'>(() => (localStorage.getItem('theme') as any) || 'light')
+  const [theme, setTheme] = useState<'light'|'dark'>(() => {
+    const stored = (localStorage.getItem('theme') as 'light'|'dark'|null)
+    if (stored === 'light' || stored === 'dark') return stored
+    const prefersDark = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+    return prefersDark ? 'dark' : 'light'
+  })
   const [selectedDepId, setSelectedDepId] = useState<string | null>(null)
   const [deps, setDeps] = useState<Dep[]>([])
   const [vulns, setVulns] = useState<Vuln[]>([])
@@ -133,8 +138,9 @@ export function App() {
   // Theme toggle
   useEffect(() => {
     const root = document.documentElement
-    if (theme === 'dark') root.classList.add('dark')
-    else root.classList.remove('dark')
+    const body = document.body
+    if (theme === 'dark') { root.classList.add('dark'); if (body) body.classList.add('dark') }
+    else { root.classList.remove('dark'); if (body) body.classList.remove('dark') }
     localStorage.setItem('theme', theme)
   }, [theme])
 
@@ -181,11 +187,15 @@ export function App() {
       try {
         const res = await fetch(`${API}/scans/${scanId}/status`)
         if (!res.ok) return
-        const status = await res.json()
+        const st = await res.json()
         if (cancelled) return
-        setScanStatus(status?.status ?? null)
-        setScanProgress({ step: status?.step, ratio: status?.ratio, message: status?.message })
-        if (status?.status === 'complete' || status?.status === 'failed') {
+        setScanStatus(st?.status ?? null)
+        setScanProgress({
+          step: st?.progress?.phase,
+          ratio: typeof st?.progress?.percent === 'number' ? (st.progress.percent / 100) : undefined,
+          message: st?.progress?.message,
+        })
+        if (st?.status === 'done' || st?.status === 'failed') {
           await loadScanDetails(scanId)
           return
         }
@@ -233,12 +243,11 @@ export function App() {
   return (
     <>
     <main className="space-y-6" aria-labelledby="page-title">
-      <header className="sticky top-0 z-10 -mx-4 mb-2 border-b border-gray-200/80 bg-white/90 px-4 py-3 backdrop-blur dark:border-gray-800 dark:bg-slate-950/80">
+      <header className="sticky top-0 z-10 -mx-4 mb-2 border-b border-gray-200/80 bg-white/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-white/80 dark:border-gray-800 dark:bg-slate-950/80">
         <div className="mx-auto flex max-w-7xl items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-brand-600 text-white shadow-sm">OS</div>
             <div>
-              <h1 id="page-title" className="text-lg font-semibold tracking-tight dark:text-slate-100">OSS Sentinel</h1>
+              <h1 id="page-title" className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">OSS Sentinel</h1>
               <p className="text-xs text-gray-600 dark:text-gray-400">Dashboard</p>
             </div>
           </div>
@@ -326,7 +335,7 @@ export function App() {
               className="rounded-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-slate-900 dark:text-gray-100 dark:hover:bg-slate-800"
               disabled={!projectId || uploading}
             >
-              {uploading ? 'Uploading…' : 'Upload Lockfile'}
+              {uploading ? 'Uploading...' : 'Upload Lockfile'}
             </button>
           </div>
           <button
@@ -335,7 +344,7 @@ export function App() {
             className="inline-flex items-center rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white shadow hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
             aria-label="Start new scan"
           >
-            {busy ? 'Starting…' : 'New Scan'}
+            {busy ? 'Starting...' : 'New Scan'}
           </button>
         </div>
       </div>
@@ -348,9 +357,9 @@ export function App() {
       {scan ? (
         <section aria-labelledby="kpi-title" className="space-y-6">
           <h2 id="kpi-title" className="text-lg font-semibold">Key Indicators</h2>
-          {scanStatus && scanStatus !== 'complete' && (
+          {scanStatus && scanStatus !== 'done' && (
             <div className="flex items-center gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              <span className="font-medium">Scanning…</span>
+              <span className="font-medium">Scanning...</span>
               {typeof scanProgress?.ratio === 'number' && (
                 <span className="rounded bg-white px-2 py-0.5 text-xs text-amber-900 shadow">{Math.round((scanProgress.ratio || 0) * 100)}%</span>
               )}
@@ -398,6 +407,7 @@ export function App() {
                   options={{
                     responsive: true,
                     maintainAspectRatio: false,
+                    elements: { arc: { borderWidth: 0 } },
                     plugins: { legend: { position: 'bottom' as const } }
                   }}
                 />
@@ -508,7 +518,7 @@ export function App() {
                             'bg-emerald-100 text-emerald-800'}`}>{(v.severity||'').toUpperCase()}</span>
                           <span className="font-mono text-xs text-gray-600 dark:text-gray-400">{v.externalId}</span>
                         </div>
-                        <div className="text-gray-800 dark:text-gray-200">{v.summary || '—'}</div>
+                        <div className="text-gray-800 dark:text-gray-200">{v.summary || 'No summary provided.'}</div>
                       </li>
                     ))}
                   </ul>
